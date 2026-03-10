@@ -2,18 +2,18 @@
 Extrator de texto via OCR de páginas completas do PDF.
 
 Estratégia:
-  1. Cada página do PDF é renderizada como imagem de alta resolução (DPI 300) usando PyMuPDF.
-  2. A imagem passa por pré-processamento: inversão de fundo escuro, contraste, nitidez e
-     binarização adaptativa para melhorar o reconhecimento OCR.
-  3. pytesseract.image_to_data() é aplicado com configurações otimizadas (--psm 11
-     para textos espalhados como certificados e manuais).
-  4. Blocos com confiança abaixo do limiar mínimo são descartados.
-  5. Os blocos retornados são usados pelo layout_analyzer para separar
-     cabeçalho, corpo e rodapé com base na posição vertical.
+  1. Cada página é renderizada como imagem de alta resolução (DPI 300) via PyMuPDF.
+  2. O tipo de página é detectado automaticamente pelo brilho médio da imagem:
+       - Fundo escuro (brilho < 110): PSM 11 (sparse text) → certificados, designs
+       - Fundo claro  (brilho ≥ 110): PSM 3  (auto-segmentation) → documentos, manuais
+  3. A imagem passa por pré-processamento antes do OCR.
+  4. pytesseract.image_to_data() extrai texto com coordenadas e confiança.
+  5. Blocos com confiança abaixo do limiar mínimo são descartados.
 """
 
 import fitz  # PyMuPDF
 import pytesseract
+import numpy as np
 from PIL import Image
 import io
 
@@ -26,18 +26,44 @@ from src.processors.image_preprocessor import preprocess_for_ocr
 _RENDER_DPI = 300
 _DPI_MATRIX = fitz.Matrix(_RENDER_DPI / 72, _RENDER_DPI / 72)
 
-# Confiança mínima aceita do Tesseract (0-100). Abaixo disso, o bloco é descartado.
-# Valor mais baixo (20) para capturar fontes decorativas/cursivas com menor confiança.
+# Confiança mínima aceita pelo Tesseract (0-100).
 _MIN_CONFIDENCE = 20
 
-# Configuração do Tesseract:
-#   --psm 3  = Auto-segmentation (padrão): detecta colunas, parágrafos e blocos.
-#              Ideal para documentos com tabelas, colunas e estrutura definida.
-#   --psm 11 = Sparse text: encontra texto em qualquer ordem.
-#              Ideal para certificados com texto espalhado sem estrutura.
-#   --oem 1  = LSTM engine: motor neural mais moderno, melhor para fontes variadas.
-_DEFAULT_PSM = 3
+# PSM por tipo de página detectado automaticamente:
+#   PSM 3  = Auto-segmentation → documentos estruturados (tabelas, colunas, parágrafos)
+#   PSM 11 = Sparse text       → texto espalhado sem estrutura (certificados, designs)
+_PSM_STRUCTURED = 3
+_PSM_SPARSE = 11
+
+# Brilho médio abaixo do qual a página é considerada de fundo escuro (0-255)
+_DARK_BG_THRESHOLD = 110
+
+# Valor sentinela: o usuário não especificou PSM, usar detecção automática
+_PSM_AUTO = -1
+_DEFAULT_PSM = _PSM_AUTO
+
 _TESSERACT_CONFIG_TEMPLATE = "--psm {psm} --oem 1"
+
+
+def _detect_page_psm(image: Image.Image) -> int:
+    """
+    Detecta automaticamente o PSM mais adequado para a página com base no
+    brilho médio da imagem renderizada.
+
+    - Fundo escuro (certificados, designs gráficos) → PSM 11 (sparse text)
+    - Fundo claro (documentos, manuais, relatórios) → PSM 3 (auto-segmentation)
+
+    Args:
+        image: Imagem PIL da página renderizada (antes do pré-processamento).
+
+    Returns:
+        Valor inteiro do PSM recomendado (3 ou 11).
+    """
+    gray = np.array(image.convert("L"))
+    mean_brightness = float(gray.mean())
+    if mean_brightness < _DARK_BG_THRESHOLD:
+        return _PSM_SPARSE    # fundo escuro: sparse text
+    return _PSM_STRUCTURED    # fundo claro: auto-segmentation
 
 
 def render_page_as_image(page: fitz.Page) -> Image.Image:
@@ -61,7 +87,7 @@ def extract_ocr_blocks(
     lang: str = "por+eng",
     preprocess: bool = True,
     psm: int = _DEFAULT_PSM,
-) -> list[OcrBlock]:
+) -> tuple[list[OcrBlock], int]:
     """
     Aplica pré-processamento e OCR sobre uma imagem, retornando blocos de texto.
 
@@ -70,17 +96,19 @@ def extract_ocr_blocks(
         page_number: Número da página (1-indexado).
         lang: Idiomas do Tesseract (ex: 'por+eng').
         preprocess: Se True, aplica pipeline de pré-processamento antes do OCR.
-        psm: Page Segmentation Mode do Tesseract.
-             3 = auto (bom para documentos estruturados/tabelas).
-             11 = sparse text (bom para certificados e texto espalhado).
+        psm: Page Segmentation Mode. Use -1 (padrão) para detecção automática,
+             3 para documentos estruturados, 11 para texto espalhado.
 
     Returns:
-        Lista de OcrBlock com texto, confiança e posição.
+        Tupla (lista de OcrBlock, psm_usado).
     """
+    # Detecção automática de PSM se não especificado
+    effective_psm = _detect_page_psm(image) if psm == _PSM_AUTO else psm
+
     # Aplica pré-processamento para melhorar reconhecimento
     ocr_image = preprocess_for_ocr(image) if preprocess else image
 
-    config = _TESSERACT_CONFIG_TEMPLATE.format(psm=psm)
+    config = _TESSERACT_CONFIG_TEMPLATE.format(psm=effective_psm)
     data = pytesseract.image_to_data(
         ocr_image,
         lang=lang,
@@ -115,7 +143,7 @@ def extract_ocr_blocks(
             )
         )
 
-    return blocks
+    return blocks, effective_psm
 
 
 def extract_pages_ocr(
@@ -128,14 +156,20 @@ def extract_pages_ocr(
     """
     Processa todas as páginas de um PDF e retorna os blocos OCR de cada uma.
 
+    Quando psm=-1 (padrão), o modo de segmentação é detectado automaticamente
+    página a página com base no brilho médio da imagem. Isso permite que um
+    mesmo PDF tenha páginas com layouts diferentes reconhecidas corretamente.
+
     Args:
         pdf_path: Caminho para o arquivo PDF.
         lang: Idiomas do Tesseract.
         verbose: Se True, imprime progresso por página.
         preprocess: Se True, aplica pré-processamento de imagem antes do OCR.
-        psm: Page Segmentation Mode do Tesseract.
-             3 = auto (bom para documentos estruturados/tabelas) [padrão].
-             11 = sparse text (bom para certificados e texto espalhado).
+        psm: Page Segmentation Mode. -1 = detecção automática (padrão),
+             3 = documentos estruturados, 11 = texto espalhado.
+
+    Returns:
+        Lista de tuplas: (page_number, lista_de_blocos, (img_width, img_height)).
     """
     results = []
 
@@ -143,17 +177,23 @@ def extract_pages_ocr(
         total = len(doc)
         for page_index in range(total):
             page_number = page_index + 1
-
-            if verbose:
-                print(f"  Processando página {page_number}/{total}...", flush=True)
-
             page = doc[page_index]
             image = render_page_as_image(page)
             img_width, img_height = image.size
 
-            blocks = extract_ocr_blocks(
+            blocks, used_psm = extract_ocr_blocks(
                 image, page_number, lang=lang, preprocess=preprocess, psm=psm
             )
+
+            if verbose:
+                psm_label = "auto-detectado" if psm == _PSM_AUTO else "manual"
+                page_type = "sparse (fundo escuro)" if used_psm == _PSM_SPARSE else "estruturado (fundo claro)"
+                print(
+                    f"  Pagina {page_number}/{total}: PSM {used_psm} [{psm_label}]"
+                    f" > {page_type} | {len(blocks)} blocos extraidos",
+                    flush=True,
+                )
+
             results.append((page_number, blocks, (img_width, img_height)))
 
     return results

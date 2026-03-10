@@ -14,7 +14,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from src.extractors.page_ocr import extract_pages_ocr, _DEFAULT_PSM
+from src.extractors.page_ocr import extract_pages_ocr, _DEFAULT_PSM, _PSM_AUTO
 from src.extractors.image_extractor import extract_embedded_images
 from src.processors.layout_analyzer import analyze_page_layout
 from src.models.document_model import DocumentResult
@@ -53,10 +53,11 @@ Exemplos:
     parser.add_argument(
         "--psm",
         type=int,
-        default=_DEFAULT_PSM,
+        default=_PSM_AUTO,
         help=(
-            f"Page Segmentation Mode do Tesseract (padrão: {_DEFAULT_PSM}). "
-            "3=auto, 6=bloco uniforme, 11=sparse text."
+            "Page Segmentation Mode do Tesseract (padrão: auto-detecção). "
+            "3=documentos com tabelas/colunas, 11=texto espalhado (certificados). "
+            "Se omitido, o sistema detecta automaticamente por página."
         ),
     )
     parser.add_argument(
