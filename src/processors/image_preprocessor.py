@@ -70,7 +70,7 @@ def preprocess_for_ocr(
     invert_dark_bg: bool = True,
     enhance_contrast: bool = True,
     enhance_sharpness: bool = True,
-    binarize: bool = True,
+    binarize: bool = False,
 ) -> Image.Image:
     """
     Aplica pipeline de pré-processamento na imagem para melhorar o OCR.
@@ -80,22 +80,28 @@ def preprocess_for_ocr(
     2. Se fundo escuro detectado: inverte a imagem (texto fica escuro no fundo branco)
     3. Aumenta contraste
     4. Aumenta nitidez (fontes decorativas)
-    5. Binarização adaptativa (elimina cinzas intermediários)
+    5. [Opcional] Binarização adaptativa
+
+    A binarização está desligada por padrão: o Tesseract com --oem 1 (LSTM)
+    lida bem com tons de cinza, e a binarização pode remover detalhes de
+    fontes cursivas/decorativas em imagens complexas.
 
     Args:
         image: Imagem PIL original (página do PDF renderizada).
         invert_dark_bg: Inverte automaticamente se o fundo for escuro.
         enhance_contrast: Aumenta o contraste da imagem.
         enhance_sharpness: Aumenta a nitidez da imagem.
-        binarize: Aplica binarização adaptativa no final.
+        binarize: Aplica binarização adaptativa no final (cuidado com imagens complexas).
 
     Returns:
         Imagem PIL processada, pronta para OCR.
     """
     img = image.convert("RGB")
 
-    # 1. Inversão para fundos escuros (melhoria principal para certificados)
-    if invert_dark_bg and _is_dark_background(img):
+    # 1. Inversão para fundos escuros
+    # Threshold conservador (110): evita inverter imagens com apenas
+    # elementos escuros no centro mas fundo geral claro.
+    if invert_dark_bg and _is_dark_background(img, threshold=110):
         img = ImageOps.invert(img)
 
     # 2. Aumento de contraste
@@ -104,13 +110,29 @@ def preprocess_for_ocr(
 
     # 3. Nitidez para fontes decorativas e cursivas
     if enhance_sharpness:
-        img = _enhance_sharpness(img, factor=2.0)
+        img = _enhance_sharpness(img, factor=1.8)
 
-    # 4. Desfoque leve para reduzir ruído antes da binarização
-    img = img.filter(ImageFilter.GaussianBlur(radius=0.5))
-
-    # 5. Binarização adaptativa
+    # 4. Binarização adaptativa (opcional)
     if binarize:
+        img = img.filter(ImageFilter.GaussianBlur(radius=0.8))
         img = _adaptive_binarize(img).convert("RGB")
 
+    return img
+
+
+def preprocess_high_contrast(image: Image.Image) -> Image.Image:
+    """
+    Variante de pré-processamento para documentos com fundo sólido escuro
+    e texto em cor única. Aplica inversão + binarização agressiva.
+
+    Útil como alternativa quando o pipeline padrão não captura texto suficiente.
+    """
+    img = image.convert("RGB")
+
+    if _is_dark_background(img, threshold=127):
+        img = ImageOps.invert(img)
+
+    img = _enhance_contrast(img, factor=2.5)
+    img = img.filter(ImageFilter.GaussianBlur(radius=0.8))
+    img = _adaptive_binarize(img).convert("RGB")
     return img
