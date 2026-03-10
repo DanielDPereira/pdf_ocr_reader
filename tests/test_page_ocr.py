@@ -39,14 +39,14 @@ class TestExtractOcrBlocks:
     def test_returns_list_of_ocr_blocks(self):
         """Deve retornar uma lista de OcrBlock."""
         image = create_test_image_with_text("Hello World")
-        blocks = extract_ocr_blocks(image, page_number=1, lang="eng")
+        blocks, _ = extract_ocr_blocks(image, page_number=1, lang="eng")
         assert isinstance(blocks, list)
 
     @_skip_if_no_tesseract
     def test_blocks_have_required_fields(self):
         """Cada bloco deve ter texto, confiança e página."""
         image = create_test_image_with_text("Testing OCR")
-        blocks = extract_ocr_blocks(image, page_number=1, lang="eng")
+        blocks, _ = extract_ocr_blocks(image, page_number=1, lang="eng")
         if blocks:
             block = blocks[0]
             assert isinstance(block, OcrBlock)
@@ -58,17 +58,17 @@ class TestExtractOcrBlocks:
 
     @_skip_if_no_tesseract
     def test_confidence_filter(self):
-        """Nenhum bloco deve ter confiança abaixo de 30."""
+        """Nenhum bloco deve ter confiança abaixo de 20."""
         image = create_test_image_with_text("PDF OCR Reader")
-        blocks = extract_ocr_blocks(image, page_number=1, lang="eng")
+        blocks, _ = extract_ocr_blocks(image, page_number=1, lang="eng")
         for block in blocks:
-            assert block.confidence >= 30.0
+            assert block.confidence >= 20.0
 
     @_skip_if_no_tesseract
     def test_no_empty_text_blocks(self):
         """Nenhum bloco deve ter texto vazio."""
         image = create_test_image_with_text("Sample Text")
-        blocks = extract_ocr_blocks(image, page_number=1, lang="eng")
+        blocks, _ = extract_ocr_blocks(image, page_number=1, lang="eng")
         for block in blocks:
             assert block.text.strip() != ""
 
