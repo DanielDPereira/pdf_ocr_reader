@@ -3,10 +3,12 @@ Extrator de texto via OCR de páginas completas do PDF.
 
 Estratégia:
   1. Cada página do PDF é renderizada como imagem de alta resolução (DPI 300) usando PyMuPDF.
-  2. pytesseract.image_to_data() é aplicado sobre a imagem para obter
-     cada palavra/bloco com suas coordenadas, texto e confiança de reconhecimento.
-  3. Blocos com confiança abaixo do limiar mínimo são descartados.
-  4. Os blocos retornados são usados pelo layout_analyzer para separar
+  2. A imagem passa por pré-processamento: inversão de fundo escuro, contraste, nitidez e
+     binarização adaptativa para melhorar o reconhecimento OCR.
+  3. pytesseract.image_to_data() é aplicado com configurações otimizadas (--psm 11
+     para textos espalhados como certificados e manuais).
+  4. Blocos com confiança abaixo do limiar mínimo são descartados.
+  5. Os blocos retornados são usados pelo layout_analyzer para separar
      cabeçalho, corpo e rodapé com base na posição vertical.
 """
 
@@ -17,6 +19,7 @@ import io
 
 import src.config  # configura o caminho do Tesseract automaticamente
 from src.models.document_model import OcrBlock
+from src.processors.image_preprocessor import preprocess_for_ocr
 
 
 # Resolução de renderização: 300 DPI garante boa qualidade para OCR
@@ -24,7 +27,14 @@ _RENDER_DPI = 300
 _DPI_MATRIX = fitz.Matrix(_RENDER_DPI / 72, _RENDER_DPI / 72)
 
 # Confiança mínima aceita do Tesseract (0-100). Abaixo disso, o bloco é descartado.
-_MIN_CONFIDENCE = 30
+# Valor mais baixo (20) para capturar fontes decorativas/cursivas com menor confiança.
+_MIN_CONFIDENCE = 20
+
+# Configuração do Tesseract:
+#   --psm 11 = Sparse text: encontra o máximo de texto possível em qualquer ordem.
+#              Ideal para certificados, manuais com layout complexo e texto espalhado.
+#   --oem 1  = LSTM engine: motor neural mais moderno, melhor para fontes variadas.
+_TESSERACT_CONFIG = "--psm 11 --oem 1"
 
 
 def render_page_as_image(page: fitz.Page) -> Image.Image:
@@ -46,21 +56,27 @@ def extract_ocr_blocks(
     image: Image.Image,
     page_number: int,
     lang: str = "por+eng",
+    preprocess: bool = True,
 ) -> list[OcrBlock]:
     """
-    Aplica OCR sobre uma imagem e retorna os blocos de texto com coordenadas.
+    Aplica pré-processamento e OCR sobre uma imagem, retornando blocos de texto.
 
     Args:
-        image: Imagem PIL de uma página do PDF.
+        image: Imagem PIL de uma página do PDF (original, sem pré-processamento).
         page_number: Número da página (1-indexado).
         lang: Idiomas do Tesseract (ex: 'por+eng').
+        preprocess: Se True, aplica pipeline de pré-processamento antes do OCR.
 
     Returns:
         Lista de OcrBlock com texto, confiança e posição.
     """
+    # Aplica pré-processamento para melhorar reconhecimento
+    ocr_image = preprocess_for_ocr(image) if preprocess else image
+
     data = pytesseract.image_to_data(
-        image,
+        ocr_image,
         lang=lang,
+        config=_TESSERACT_CONFIG,
         output_type=pytesseract.Output.DICT,
     )
 
@@ -98,6 +114,7 @@ def extract_pages_ocr(
     pdf_path: str,
     lang: str = "por+eng",
     verbose: bool = False,
+    preprocess: bool = True,
 ) -> list[tuple[int, list[OcrBlock], tuple[int, int]]]:
     """
     Processa todas as páginas de um PDF e retorna os blocos OCR de cada uma.
@@ -106,6 +123,7 @@ def extract_pages_ocr(
         pdf_path: Caminho para o arquivo PDF.
         lang: Idiomas do Tesseract.
         verbose: Se True, imprime progresso por página.
+        preprocess: Se True, aplica pré-processamento de imagem antes do OCR.
 
     Returns:
         Lista de tuplas com: (page_number, lista_de_blocos, (img_width, img_height)).
@@ -125,7 +143,7 @@ def extract_pages_ocr(
             image = render_page_as_image(page)
             img_width, img_height = image.size
 
-            blocks = extract_ocr_blocks(image, page_number, lang=lang)
+            blocks = extract_ocr_blocks(image, page_number, lang=lang, preprocess=preprocess)
             results.append((page_number, blocks, (img_width, img_height)))
 
     return results
