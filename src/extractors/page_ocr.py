@@ -31,10 +31,13 @@ _DPI_MATRIX = fitz.Matrix(_RENDER_DPI / 72, _RENDER_DPI / 72)
 _MIN_CONFIDENCE = 20
 
 # Configuração do Tesseract:
-#   --psm 11 = Sparse text: encontra o máximo de texto possível em qualquer ordem.
-#              Ideal para certificados, manuais com layout complexo e texto espalhado.
+#   --psm 3  = Auto-segmentation (padrão): detecta colunas, parágrafos e blocos.
+#              Ideal para documentos com tabelas, colunas e estrutura definida.
+#   --psm 11 = Sparse text: encontra texto em qualquer ordem.
+#              Ideal para certificados com texto espalhado sem estrutura.
 #   --oem 1  = LSTM engine: motor neural mais moderno, melhor para fontes variadas.
-_TESSERACT_CONFIG = "--psm 11 --oem 1"
+_DEFAULT_PSM = 3
+_TESSERACT_CONFIG_TEMPLATE = "--psm {psm} --oem 1"
 
 
 def render_page_as_image(page: fitz.Page) -> Image.Image:
@@ -57,6 +60,7 @@ def extract_ocr_blocks(
     page_number: int,
     lang: str = "por+eng",
     preprocess: bool = True,
+    psm: int = _DEFAULT_PSM,
 ) -> list[OcrBlock]:
     """
     Aplica pré-processamento e OCR sobre uma imagem, retornando blocos de texto.
@@ -66,6 +70,9 @@ def extract_ocr_blocks(
         page_number: Número da página (1-indexado).
         lang: Idiomas do Tesseract (ex: 'por+eng').
         preprocess: Se True, aplica pipeline de pré-processamento antes do OCR.
+        psm: Page Segmentation Mode do Tesseract.
+             3 = auto (bom para documentos estruturados/tabelas).
+             11 = sparse text (bom para certificados e texto espalhado).
 
     Returns:
         Lista de OcrBlock com texto, confiança e posição.
@@ -73,10 +80,11 @@ def extract_ocr_blocks(
     # Aplica pré-processamento para melhorar reconhecimento
     ocr_image = preprocess_for_ocr(image) if preprocess else image
 
+    config = _TESSERACT_CONFIG_TEMPLATE.format(psm=psm)
     data = pytesseract.image_to_data(
         ocr_image,
         lang=lang,
-        config=_TESSERACT_CONFIG,
+        config=config,
         output_type=pytesseract.Output.DICT,
     )
 
@@ -115,6 +123,7 @@ def extract_pages_ocr(
     lang: str = "por+eng",
     verbose: bool = False,
     preprocess: bool = True,
+    psm: int = _DEFAULT_PSM,
 ) -> list[tuple[int, list[OcrBlock], tuple[int, int]]]:
     """
     Processa todas as páginas de um PDF e retorna os blocos OCR de cada uma.
@@ -124,10 +133,9 @@ def extract_pages_ocr(
         lang: Idiomas do Tesseract.
         verbose: Se True, imprime progresso por página.
         preprocess: Se True, aplica pré-processamento de imagem antes do OCR.
-
-    Returns:
-        Lista de tuplas com: (page_number, lista_de_blocos, (img_width, img_height)).
-        As dimensões da imagem são necessárias para cálculo de proporções no layout_analyzer.
+        psm: Page Segmentation Mode do Tesseract.
+             3 = auto (bom para documentos estruturados/tabelas) [padrão].
+             11 = sparse text (bom para certificados e texto espalhado).
     """
     results = []
 
@@ -143,7 +151,9 @@ def extract_pages_ocr(
             image = render_page_as_image(page)
             img_width, img_height = image.size
 
-            blocks = extract_ocr_blocks(image, page_number, lang=lang, preprocess=preprocess)
+            blocks = extract_ocr_blocks(
+                image, page_number, lang=lang, preprocess=preprocess, psm=psm
+            )
             results.append((page_number, blocks, (img_width, img_height)))
 
     return results
