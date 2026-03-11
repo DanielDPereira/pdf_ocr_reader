@@ -8,6 +8,9 @@ numpy>=1.26.0
 pytesseract==0.3.13
 Pillow==11.1.0
 
+# Interface gráfica
+customtkinter==5.2.2
+
 # Testing
 pytest==8.3.5
 pytest-cov==6.1.0
