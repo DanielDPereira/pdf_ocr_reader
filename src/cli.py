@@ -9,13 +9,17 @@ Exemplos:
     python -m src.cli documento.pdf --output resultado.json --lang por+eng --verbose
     python -m src.cli certificado.pdf --psm 11
     python -m src.cli relatorio.pdf --output relatorio.txt --format txt
+    python -m src.cli escaneado.pdf --no-hybrid   # força OCR puro
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-from src.extractors.page_ocr import extract_pages_ocr, _DEFAULT_PSM, _PSM_AUTO
+import fitz
+
+from src.extractors.hybrid_extractor import extract_pages_hybrid
+from src.extractors.page_ocr import _PSM_AUTO
 from src.extractors.image_extractor import extract_embedded_images
 from src.extractors.metadata_extractor import extract_pdf_metadata
 from src.processors.layout_analyzer import analyze_page_layout
@@ -25,62 +29,58 @@ from src.models.document_model import DocumentResult
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pdf-ocr-reader",
-        description="Le um PDF via OCR e extrai texto estruturado por pagina.",
+        description="Le um PDF via extração híbrida (nativo + OCR) e retorna texto estruturado.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Formatos de saida (--format):
-  json  Saida estruturada em JSON (padrao) - ideal para integracao com sistemas
-  txt   Texto puro com separadores visuais - ideal para leitura humana e RAG
+Modos de extração (automático por página):
+  nativo  PDFs gerados digitalmente (Word, InDesign): texto exato, sem OCR
+  ocr     Páginas escaneadas: Tesseract com pré-processamento de imagem
 
-PSM - Page Segmentation Mode do Tesseract:
-  auto  Detecta automaticamente por brilho da pagina (padrao)
-  3     Documentos com colunas, tabelas e paragrafos
-  11    Texto espalhado sem estrutura (certificados, designs)
+Formatos de saída (--format):
+  json  Estruturado com metadados, regiões e tabelas (padrão)
+  txt   Texto puro com separadores visuais
+
+PSM do Tesseract (--psm, usado apenas no modo OCR):
+  auto  Detecta automaticamente por brilho (padrão)
+  3     Documentos estruturados (colunas, tabelas)
+  11    Texto esparso (certificados, designs)
 
 Exemplos:
   python -m src.cli relatorio.pdf --output resultado.json --verbose
-  python -m src.cli certificado.pdf --psm 11 --output cert.json
+  python -m src.cli certif.pdf --psm 11 --output cert.json
   python -m src.cli manual.pdf --output manual.txt --format txt
+  python -m src.cli escaneado.pdf --no-hybrid
         """,
     )
-    parser.add_argument(
-        "pdf_path",
-        help="Caminho para o arquivo PDF a ser processado.",
-    )
-    parser.add_argument(
-        "--output", "-o",
-        default=None,
-        help="Arquivo de saida (JSON ou TXT). Se omitido, imprime no terminal.",
-    )
+    parser.add_argument("pdf_path", help="Caminho para o arquivo PDF.")
+    parser.add_argument("--output", "-o", default=None, help="Arquivo de saída.")
     parser.add_argument(
         "--format", "-f",
         choices=["json", "txt"],
         default="json",
-        help="Formato de saida: json (padrao) ou txt.",
+        help="Formato de saída: json (padrão) ou txt.",
     )
-    parser.add_argument(
-        "--lang", "-l",
-        default="por+eng",
-        help="Idiomas do Tesseract (padrao: por+eng).",
-    )
+    parser.add_argument("--lang", "-l", default="por+eng", help="Idiomas Tesseract.")
     parser.add_argument(
         "--psm",
         type=int,
         default=_PSM_AUTO,
-        help=(
-            "Page Segmentation Mode do Tesseract (padrao: auto-deteccao). "
-            "3=documentos com tabelas/colunas, 11=texto espalhado (certificados)."
-        ),
+        help="PSM do Tesseract (padrão: auto-detecção). 3=estruturado, 11=esparso.",
     )
     parser.add_argument(
         "--no-preprocess",
         action="store_true",
-        help="Desativa o pre-processamento de imagem.",
+        help="Desativa pré-processamento de imagem.",
+    )
+    parser.add_argument(
+        "--no-hybrid",
+        action="store_true",
+        help="Desativa extração nativa — usa OCR puro em todas as páginas.",
     )
     parser.add_argument(
         "--verbose", "-v",
         action="store_true",
-        help="Exibe progresso detalhado durante o processamento.",
+        help="Exibe progresso detalhado por página.",
     )
     return parser
 
@@ -92,27 +92,22 @@ def run(
     lang: str,
     psm: int,
     preprocess: bool,
+    hybrid: bool,
     verbose: bool,
 ) -> DocumentResult:
-    """
-    Executa o pipeline completo de extracao.
-
-    Returns:
-        DocumentResult com todo o conteudo extraido.
-    """
     pdf = Path(pdf_path)
     if not pdf.exists():
         print(f"Erro: arquivo nao encontrado: {pdf_path}", file=sys.stderr)
         sys.exit(1)
 
     if verbose:
+        mode_label = "hibrido (nativo + OCR fallback)" if hybrid else "OCR puro"
         print(f"Processando: {pdf.name}")
+        print(f"Modo       : {mode_label}")
         print(f"Idioma OCR : {lang}")
-        print(f"PSM        : {psm if psm != _PSM_AUTO else 'auto'}")
         print(f"Formato    : {fmt}")
-        print(f"Preprocess.: {'desativado' if not preprocess else 'ativado'}")
 
-    # 1. Metadados do PDF
+    # 1. Metadados
     if verbose:
         print("\n[1/4] Lendo metadados do PDF...")
     metadata = extract_pdf_metadata(pdf_path)
@@ -120,23 +115,10 @@ def run(
         for k, v in metadata.to_dict().items():
             print(f"       {k}: {v}")
 
-    # 2. OCR de paginas completas
+    # 2. Extração híbrida de páginas
     if verbose:
-        print("\n[2/4] Extraindo texto via OCR das paginas...")
-    pages_data = extract_pages_ocr(
-        pdf_path, lang=lang, verbose=verbose, preprocess=preprocess, psm=psm
-    )
+        print("\n[2/4] Extraindo texto das paginas...")
 
-    # 3. Imagens embutidas
-    if verbose:
-        print("\n[3/4] Extraindo imagens embutidas...")
-    images_by_page = extract_embedded_images(pdf_path, lang=lang)
-
-    # 4. Analise de layout
-    if verbose:
-        print("\n[4/4] Analisando layout (header/body/footer)...")
-
-    import fitz
     with fitz.open(pdf_path) as doc:
         total_pages = len(doc)
 
@@ -146,18 +128,38 @@ def run(
         metadata=metadata,
     )
 
-    for page_number, blocks, (img_width, img_height) in pages_data:
-        page_result = analyze_page_layout(page_number, blocks, img_height)
-        page_result.embedded_images = images_by_page.get(page_number, [])
+    for page_data in extract_pages_hybrid(
+        pdf_path,
+        lang=lang,
+        verbose=verbose,
+        preprocess=preprocess,
+        psm=psm,
+    ):
+        page_result = analyze_page_layout(
+            page_data.page_number,
+            page_data.blocks,
+            page_data.img_size[1],   # height
+        )
+        page_result.extraction_mode = page_data.mode
+        page_result.tables = page_data.tables
         document.pages.append(page_result)
 
-    # Saida
+    # 3. Imagens embutidas
+    if verbose:
+        print("\n[3/4] Extraindo imagens embutidas...")
+    images_by_page = extract_embedded_images(pdf_path, lang=lang)
+    for page_result in document.pages:
+        page_result.embedded_images = images_by_page.get(page_result.page_number, [])
+
+    if verbose:
+        print("\n[4/4] Finalizando...")
+
+    # Saída
     if output:
-        out_path = Path(output)
         if fmt == "txt":
-            document.save_txt(str(out_path))
+            document.save_txt(output)
         else:
-            document.save_json(str(out_path))
+            document.save_json(output)
         if verbose:
             print(f"\nResultado salvo em: {output}")
     else:
@@ -179,6 +181,7 @@ def main():
         lang=args.lang,
         psm=args.psm,
         preprocess=not args.no_preprocess,
+        hybrid=not args.no_hybrid,
         verbose=args.verbose,
     )
 
