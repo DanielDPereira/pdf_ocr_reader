@@ -11,8 +11,10 @@ Como usar:
 
 from __future__ import annotations
 
+import json
 import threading
 import queue
+import sys
 from pathlib import Path
 from tkinter import filedialog, messagebox
 
