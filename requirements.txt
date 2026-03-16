@@ -11,9 +11,15 @@ Pillow==11.1.0
 # Interface gráfica
 customtkinter==5.2.2
 
+# API HTTP
+fastapi>=0.110.0
+python-multipart>=0.0.9
+uvicorn[standard]>=0.29.0
+
 # Testing
 pytest==8.3.5
 pytest-cov==6.1.0
+httpx>=0.27.0
 
 # Code quality
 ruff==0.11.0
