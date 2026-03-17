@@ -16,13 +16,8 @@ import argparse
 import sys
 from pathlib import Path
 
-import fitz
-
-from src.extractors.hybrid_extractor import extract_pages_hybrid
 from src.extractors.page_ocr import _PSM_AUTO
-from src.extractors.image_extractor import extract_embedded_images
-from src.extractors.metadata_extractor import extract_pdf_metadata
-from src.processors.layout_analyzer import analyze_page_layout
+from src.core.pipeline import run_pipeline
 from src.models.document_model import DocumentResult
 
 
@@ -100,59 +95,14 @@ def run(
         print(f"Erro: arquivo nao encontrado: {pdf_path}", file=sys.stderr)
         sys.exit(1)
 
-    if verbose:
-        mode_label = "hibrido (nativo + OCR fallback)" if hybrid else "OCR puro"
-        print(f"Processando: {pdf.name}")
-        print(f"Modo       : {mode_label}")
-        print(f"Idioma OCR : {lang}")
-        print(f"Formato    : {fmt}")
-
-    # 1. Metadados
-    if verbose:
-        print("\n[1/4] Lendo metadados do PDF...")
-    metadata = extract_pdf_metadata(pdf_path)
-    if verbose and metadata.to_dict():
-        for k, v in metadata.to_dict().items():
-            print(f"       {k}: {v}")
-
-    # 2. Extração híbrida de páginas
-    if verbose:
-        print("\n[2/4] Extraindo texto das paginas...")
-
-    with fitz.open(pdf_path) as doc:
-        total_pages = len(doc)
-
-    document = DocumentResult(
-        file_path=str(pdf),
-        total_pages=total_pages,
-        metadata=metadata,
-    )
-
-    for page_data in extract_pages_hybrid(
-        pdf_path,
+    document = run_pipeline(
+        pdf_path=str(pdf),
         lang=lang,
-        verbose=verbose,
-        preprocess=preprocess,
         psm=psm,
-    ):
-        page_result = analyze_page_layout(
-            page_data.page_number,
-            page_data.blocks,
-            page_data.img_size[1],   # height
-        )
-        page_result.extraction_mode = page_data.mode
-        page_result.tables = page_data.tables
-        document.pages.append(page_result)
-
-    # 3. Imagens embutidas
-    if verbose:
-        print("\n[3/4] Extraindo imagens embutidas...")
-    images_by_page = extract_embedded_images(pdf_path, lang=lang)
-    for page_result in document.pages:
-        page_result.embedded_images = images_by_page.get(page_result.page_number, [])
-
-    if verbose:
-        print("\n[4/4] Finalizando...")
+        preprocess=preprocess,
+        hybrid=hybrid,
+        verbose=verbose,
+    )
 
     # Saída
     if output:
