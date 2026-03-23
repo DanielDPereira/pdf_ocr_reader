@@ -51,7 +51,24 @@ pip install -r requirements.txt
 
 ## Uso
 
-### Interface Gráfica (recomendado)
+### API via Docker (Recomendado para Servidores)
+
+A forma mais simples e isolada de rodar a aplicação como uma **API REST** (sem precisar lidar com dependências de sistema como o Tesseract no seu SO nativo) é através do Docker.
+
+```bash
+# Constrói a imagem e inicia a API em segundo plano
+docker compose up -d --build
+```
+
+A API estará rodando instantaneamente. Você pode testá-la e ver as opções de rota pela documentação interativa:
+- **Painel Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
+
+Para desligar a API e limpar os containers, rode:
+```bash
+docker compose down
+```
+
+### Interface Gráfica (Uso local)
 
 ```bash
 python -m src.gui

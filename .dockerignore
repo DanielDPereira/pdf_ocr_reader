@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.json
+*.txt
+!requirements.txt
+.pytest_cache/
+tests/generated/
+.git/
+.vscode/
