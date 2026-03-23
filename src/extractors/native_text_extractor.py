@@ -111,6 +111,6 @@ def extract_native_tables(page: fitz.Page) -> list[TableResult]:
                 rows.append(row)
 
         if rows:
-            tables.append(TableResult(index=i, rows=rows))
+            tables.append(TableResult(index=i, rows=rows, bbox=table.bbox))
 
     return tables

@@ -59,6 +59,7 @@ class TableResult:
     """
     index: int
     rows: list[list[str]] = field(default_factory=list)
+    bbox: tuple[float, float, float, float] = field(default_factory=lambda: (0.0, 0.0, 0.0, 0.0))
 
     @property
     def headers(self) -> list[str]:
@@ -71,7 +72,7 @@ class TableResult:
         return self.rows[1:] if len(self.rows) > 1 else []
 
     def to_dict(self) -> dict:
-        return {"index": self.index, "rows": self.rows}
+        return {"index": self.index, "rows": self.rows, "bbox": self.bbox}
 
     def to_plain_text(self) -> str:
         """Representa a tabela como texto com separador | entre células."""
@@ -138,9 +139,6 @@ class PageResult:
 
         if self.body.text.strip():
             lines += [self.body.text.strip(), ""]
-
-        for table in self.tables:
-            lines += [f"[Tabela {table.index}]", table.to_plain_text(), ""]
 
         if self.footer.text.strip():
             lines += ["--- Rodapé ---", self.footer.text.strip(), ""]

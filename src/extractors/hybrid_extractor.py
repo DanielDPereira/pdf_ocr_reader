@@ -94,10 +94,38 @@ def extract_pages_hybrid(
                 blocks = extract_native_blocks(page, page_number)
                 tables = extract_native_tables(page)
 
+                # Remove duplicate native text that is inside any table's bbox
+                filtered_blocks = []
+                for b in blocks:
+                    cx = b.x + b.width / 2
+                    cy = b.y + b.height / 2
+                    is_in_table = False
+                    for t in tables:
+                        tx0, ty0, tx1, ty1 = t.bbox
+                        if tx0 <= cx <= tx1 and ty0 <= cy <= ty1:
+                            is_in_table = True
+                            break
+                    if not is_in_table:
+                        filtered_blocks.append(b)
+
+                # Inject table back as an OcrBlock to preserve reading order
+                for t in tables:
+                    tx0, ty0, tx1, ty1 = t.bbox
+                    filtered_blocks.append(OcrBlock(
+                        text=t.to_plain_text(),
+                        confidence=100.0,
+                        page_number=page_number,
+                        x=int(tx0),
+                        y=int(ty0),
+                        width=int(tx1 - tx0),
+                        height=int(ty1 - ty0),
+                    ))
+                blocks = filtered_blocks
+
                 if verbose:
                     print(
                         f"  Pagina {page_number}/{total}: "
-                        f"[NATIVO] | {len(blocks)} blocos | "
+                        f"[NATIVO] | {len(blocks)} blocos (após filtro) | "
                         f"{len(tables)} tabela(s)"
                     )
             else:

@@ -176,14 +176,14 @@ pytest tests/ --cov=src --cov-report=term-missing
 - [x] Metadados do PDF (autor, título, data)
 - [x] Saída em JSON e TXT
 - [x] Interface gráfica (CustomTkinter)
-- [ ] Extração híbrida: texto nativo + OCR fallback por página
-- [ ] Extração de tabelas (`page.find_tables()`)
-- [ ] API REST (FastAPI)
+- [x] Extração híbrida: texto nativo + OCR fallback por página
+- [x] Extração de tabelas (`page.find_tables()`)
+- [x] API REST (FastAPI)
 
 ---
 
 ## Limitações Conhecidas
 
-- O OCR por imagem não compreende estrutura tabular — tabelas complexas podem ficar misturadas
-- Fontes manuscritas/cursivas decorativas têm qualidade reduzida (limitação do Tesseract)
-- PDFs com texto nativo (Word, InDesign) têm melhor resultado quando processados com extração híbrida (em desenvolvimento)
+- O OCR por imagem não compreende estrutura tabular — no modo puramente escaneado, tabelas complexas podem ficar misturadas. Já no modo **Híbrido**, as tabelas de documentos nativos são extraídas mantendo a estrutura tabular intacta.
+- Fontes manuscritas/cursivas decorativas têm qualidade reduzida (limitação do Tesseract).
+- Fontes de arquivos PDF totalmente protegidas/rasterizadas que não geram texto nativo farão fallback automático para OCR.
